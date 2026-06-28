@@ -1,0 +1,12 @@
+{
+  "name": "word-game-pvp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}

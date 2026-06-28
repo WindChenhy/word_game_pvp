@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b0d12" />
+  <title>标枪单词对战 · Javelin Word Duel</title>
+  <link rel="stylesheet" href="./styles.css?v=12" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Rajdhani:wght@500;600;700&family=Caveat:wght@500;700&family=Permanent+Marker&family=Zen+Maru+Gothic:wght@700;900&family=Kosugi+Maru&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='52' font-size='52'%3E%F0%9F%93%8D%3C/text%3E%3C/svg%3E" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- 场景插画背景（训练/PVE 全幅，菜单用自己的） -->
+    <div id="scene-bg" class="scene-bg" data-bg=""></div>
+
+    <!-- 3D 画布 -->
+    <canvas id="stage"></canvas>
+
+    <!-- HUD 层 -->
+    <div id="hud" class="hud" hidden>
+
+      <!-- 顶部对峙：敌人左 / 玩家右 -->
+      <div class="hud-top">
+        <div class="combatant combatant--enemy">
+          <span class="combatant-label">敌人</span>
+          <div class="bar-track"><div id="enemy-hp-fill" class="bar-fill bar-fill--enemy"></div></div>
+          <span id="enemy-hp-text" class="bar-text">60/60</span>
+        </div>
+
+        <div class="vs-divider">⚔</div>
+
+        <div class="combatant combatant--player">
+          <span class="combatant-label">你</span>
+          <div class="bar-track"><div id="player-hp-fill" class="bar-fill bar-fill--player"></div></div>
+          <span id="player-hp-text" class="bar-text">100/100</span>
+        </div>
+      </div>
+
+      <!-- 连击浮层 -->
+      <div class="hud-combo" id="combo-display">
+        <span class="combo-num" id="combo-num">0</span>
+        <span class="combo-label">COMBO</span>
+      </div>
+
+      <!-- 场景信息（左下角小字） -->
+      <div class="hud-meta">
+        <span id="scene-info">第 1 关</span>
+      </div>
+
+      <!-- 计时条 -->
+      <div id="hud-timer" class="hud-timer">
+        <div class="timer-track"><div id="timer-fill" class="timer-fill"></div></div>
+        <span id="timer-text" class="timer-text"></span>
+      </div>
+
+      <!-- 输入区：中文释义紧贴输入框上方 -->
+      <div class="input-zone">
+        <div class="prompt-card">
+          <span class="prompt-label">输入对应英文</span>
+          <span id="prompt-zh" class="prompt-zh">苹果</span>
+          <span id="prompt-theme" class="prompt-theme">food · fruit</span>
+        </div>
+
+        <div class="input-bar">
+          <input id="word-input" class="word-input" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" inputmode="text" placeholder="在这里打字..." />
+          <button id="submit-btn" class="submit-btn" aria-label="攻击">⚡</button>
+        </div>
+      </div>
+
+      <!-- 浮层：伤害飘字 / 屏幕震动 -->
+      <div id="fx-layer" class="fx-layer"></div>
+    </div>
+
+    <!-- 场景层（菜单 / 结算） -->
+    <div id="scene-layer" class="scene-layer"></div>
+  </div>
+
+  <script type="module" src="./main.js?v=12"></script>
+</body>
+</html>
