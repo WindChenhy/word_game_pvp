@@ -93,6 +93,7 @@ export class SupabaseTransport {
 
   _joinLobby() {
     if (this._lobbyChannel) return;
+    this._lobbySubscribed = false;
     this._lobbyChannel = this._client.channel('pvp-lobby', {
       config: { presence: { key: this.playerId } }
     });
@@ -143,9 +144,12 @@ export class SupabaseTransport {
 
     this._lobbyChannel.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
-        await this._lobbyChannel.track({ user_id: this.playerId, joined_at: Date.now() });
+        this._lobbySubscribed = true;
+        try {
+          await this._lobbyChannel.track({ user_id: this.playerId, joined_at: Date.now() });
+        } catch {}
         this._dispatch({ type: 'matchmaking' });
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      } else if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && !this._lobbySubscribed) {
         this._dispatch({ type: 'disconnected', code: 0 });
       }
     });
@@ -159,6 +163,7 @@ export class SupabaseTransport {
   }
 
   _joinRoom(roomId) {
+    this._roomReady = false;
     this._roomChannel = this._client.channel(`pvp-room:${roomId}`, {
       config: { presence: { key: this.playerId } }
     });
@@ -177,6 +182,7 @@ export class SupabaseTransport {
     });
 
     this._roomChannel.on('presence', { event: 'sync' }, () => {
+      if (!this._roomReady) return;
       const state = this._roomChannel.presenceState();
       const players = Object.keys(state);
       if (players.length < 2 && this._room) {
@@ -187,7 +193,10 @@ export class SupabaseTransport {
 
     this._roomChannel.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
-        await this._roomChannel.track({ user_id: this.playerId, side: this._side });
+        try {
+          await this._roomChannel.track({ user_id: this.playerId, side: this._side });
+        } catch {}
+        this._roomReady = true;
         if (this._isHost) {
           this._room = {
             hp: { player1: 100, player2: 100 },
@@ -198,7 +207,7 @@ export class SupabaseTransport {
           this._broadcast({ type: 'game_start', hp: 100, maxHp: 100 });
           this._sendNextWord();
         }
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      } else if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && !this._roomReady) {
         this._dispatch({ type: 'disconnected', code: 0 });
       }
     });
