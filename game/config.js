@@ -51,7 +51,17 @@ export const CONFIG = {
   PVP: {
     SERVER_URL: `ws://${window.location.hostname}:3001`,
   },
+
+  // Supabase Realtime 配置（用于 Vercel 部署）
+  SUPABASE: {
+    URL: 'https://spmoyhabfpoovteowrdb.supabase.co',
+    KEY: 'sb_publishable_Wd3R0sTMPeXtgaDnUnwKpg_f4RsOqHY',
+  },
 };
+
+// 自动检测部署模式：Vercel 环境使用 Supabase Realtime，本地使用 WebSocket
+const isVercel = window.location.hostname.endsWith('.vercel.app');
+export const PVP_MODE = isVercel ? 'supabase' : 'websocket';
 
 export const COLORS = {
   BG_TOP: 0x0b0d12,

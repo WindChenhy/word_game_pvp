@@ -1,5 +1,5 @@
 import { state, EVENTS } from '../state.js';
-import { NetworkClient } from '../network.js';
+import { createTransport } from '../network.js';
 import { CONFIG } from '../config.js';
 
 const PVP_STATE = {
@@ -15,7 +15,7 @@ export class PvpScene {
     this.projectiles = projectiles;
     this.hud = hud;
     this.menu = menu;
-    this.net = new NetworkClient();
+    this.net = null;
     this._pvpState = null;
     this._side = null;
     this._pendingAnswer = false;
@@ -23,8 +23,9 @@ export class PvpScene {
   }
 
   enter() {
-    // Clean any previous connection before starting fresh
-    this.net.disconnect();
+    if (this.net) {
+      this.net.disconnect();
+    }
     this._unbindNet.forEach(fn => fn());
     this._unbindNet = [];
 
@@ -54,13 +55,15 @@ export class PvpScene {
     this.projectiles.clear();
     this._unbindNet.forEach(fn => fn());
     this._unbindNet = [];
-    this.net.disconnect();
+    if (this.net) {
+      this.net.disconnect();
+    }
     document.getElementById('scene-bg').style.backgroundImage = '';
     this._unmountMagazine();
     this.menu.render();
   }
 
-  _doConnect() {
+  async _doConnect() {
     this._connectAttempt++;
 
     // Detect file:// protocol which blocks WebSocket connections
@@ -69,19 +72,19 @@ export class PvpScene {
       return;
     }
     const attempt = this._connectAttempt;
-    this.net.connect(CONFIG.PVP.SERVER_URL)
-      .then(() => {
-        if (attempt !== this._connectAttempt) return;
-        this._pvpState = PVP_STATE.MATCHMAKING;
-        this._showMatchmaking();
-        this._bindEvents();
-        this.net.send({ type: 'find_match' });
-      })
-      .catch((err) => {
-        if (attempt !== this._connectAttempt) return;
-        console.warn('[PVP] Connection failed:', err?.message || err);
-        this._showConnectionError(err?.message || '未知错误');
-      });
+    try {
+      this.net = await createTransport();
+      await this.net.connect(CONFIG.PVP.SERVER_URL);
+      if (attempt !== this._connectAttempt) return;
+      this._pvpState = PVP_STATE.MATCHMAKING;
+      this._showMatchmaking();
+      this._bindEvents();
+      this.net.send({ type: 'find_match' });
+    } catch (err) {
+      if (attempt !== this._connectAttempt) return;
+      console.warn('[PVP] Connection failed:', err?.message || err);
+      this._showConnectionError(err?.message || '未知错误');
+    }
   }
 
   _bindEvents() {
@@ -213,7 +216,10 @@ export class PvpScene {
       </div>
     `;
     layer.querySelector('#pvp-retry').addEventListener('click', () => {
-      this.net.disconnect();
+      if (this.net) {
+        this.net.disconnect();
+      }
+      this.net = null;
       this._pvpState = PVP_STATE.CONNECTING;
       this._showConnecting();
       this._doConnect();
