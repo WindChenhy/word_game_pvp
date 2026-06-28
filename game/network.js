@@ -1,3 +1,13 @@
+import { PVP_MODE } from './config.js';
+
+export async function createTransport() {
+  if (PVP_MODE === 'supabase') {
+    const { SupabaseTransport } = await import('./supabase-transport.js');
+    return new SupabaseTransport();
+  }
+  return new NetworkClient();
+}
+
 export class NetworkClient {
   constructor() {
     this.ws = null;
