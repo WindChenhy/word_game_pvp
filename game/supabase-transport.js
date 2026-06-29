@@ -192,8 +192,9 @@ export class SupabaseTransport {
             return;
           }
           const guestSide = this._side === 'player1' ? 'player2' : 'player1';
+          // 抢答制：只要 guest 提交了就立即结束本回合；host 自己没提交也按"空着"算 -10。
           this._room.answered.set(guestSide, msg.word);
-          if (this._room.answered.size >= 2) {
+          if (this._room.currentWord) {
             this._processAnswers();
           }
         }
@@ -286,8 +287,9 @@ export class SupabaseTransport {
     // 但移除冗余 _dispatch 让逻辑更清晰。
     this._broadcast(data);
     this._answerTimeout = setTimeout(() => {
+      // 30s 兜底：双方都没提交时按"超时"结算，都按 self_hit -10 处理。
       this._processAnswers();
-    }, 8000);
+    }, 30000);
   }
 
   _handleSubmit(word) {
@@ -298,17 +300,22 @@ export class SupabaseTransport {
       // 在本地基于当前单词做一次"乐观结算"并立刻 dispatch。
       // 之后 host 的回环广播会带相同的 key，被 _isOptimisticDup 过滤掉，避免双重动画。
       this._optimisticLocalResolve(word, this._currentWord);
-      this._broadcast({ type: 'submit_answer', word });
+      // 同样带上 wordId，让 host 收到时能校验是否"过题"，防止上一回合的迟到广播污染下一回合。
+      this._broadcast({ type: 'submit_answer', word, wordId: this._currentWord && this._currentWord.id });
       return;
     }
     // ===== HOST 分支 =====
     // host 自己也有 _room.currentWord，所以也能在本地立刻做"乐观结算"，
     // 这样点完发送按钮 0 延迟就能看到自己那一侧的动画，
     // 不必等 guest 的 submit_answer 跨越 1~2s 网络回来才触发 _processAnswers。
+    //
+    // 抢答制：只要有一方提交就立即结束本回合。host 把自己先存进 answered，
+    // 然后无论 size 是 1（host 先提交）还是 2（同时跟 guest 撞车）都直接
+    // 结算本回合——空着没提交的那一方按 self_hit -10 处理。
     this._room.answered.set(this._side, word);
     this._optimisticLocalResolve(word, this._room.currentWord);
     this._broadcast({ type: 'submit_answer', word, wordId: this._room.currentWord && this._room.currentWord.id });
-    if (this._room.answered.size >= 2) {
+    if (this._room.answered.size >= 1 && this._room.currentWord) {
       this._processAnswers();
     }
   }

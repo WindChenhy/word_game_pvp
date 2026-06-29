@@ -14,6 +14,7 @@ class GameState {
     this.currentWord = null;           // { id, word, zh, theme, ... }
     this.inputBuffer = '';             // 当前输入
     this.inputDeadline = 0;            // 超时时间戳
+    this.inputTotalMs = CONFIG.COMBAT.INPUT_TIMEOUT_MS; // 当前回合总时长，HUD 用来渲染计时条
     this.lastEnemyAttack = performance.now();  // 上次敌人攻击时间戳（init 时刻，避免首次 tick 立即触发）
     this.sessionStats = {
       hits: 0,
@@ -46,6 +47,7 @@ class GameState {
     this.currentWord = null;
     this.inputBuffer = '';
     this.inputDeadline = 0;
+    this.inputTotalMs = CONFIG.COMBAT.INPUT_TIMEOUT_MS;
     this.lastEnemyAttack = 0;
     this.sessionStats = { hits: 0, misses: 0, damageDealt: 0, damageTaken: 0, correctWords: [] };
   }
@@ -55,10 +57,11 @@ class GameState {
     this.emit('scene:change', sceneName);
   }
 
-  setWord(word) {
+  setWord(word, totalMs = CONFIG.COMBAT.INPUT_TIMEOUT_MS) {
     this.currentWord = word;
     this.inputBuffer = '';
-    this.inputDeadline = performance.now() + CONFIG.COMBAT.INPUT_TIMEOUT_MS;
+    this.inputDeadline = performance.now() + totalMs;
+    this.inputTotalMs = totalMs;
     this.emit('word:change', word);
   }
 

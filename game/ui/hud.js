@@ -68,7 +68,9 @@ export class HUD {
 
     if (state.inputDeadline > 0) {
       const remaining = Math.max(0, state.inputDeadline - now);
-      const totalMs = CONFIG.COMBAT.INPUT_TIMEOUT_MS;
+      // 用 state 里记录的真实回合总时长（PVE 8s / PVP 30s）来缩放计时条，
+      // 不再硬编码 CONFIG.COMBAT.INPUT_TIMEOUT_MS，避免 PVP 30s 时进度条一开始就被拉满。
+      const totalMs = state.inputTotalMs || CONFIG.COMBAT.INPUT_TIMEOUT_MS;
       const ratio = Math.min(1, remaining / totalMs);
       this.timerFill.style.transform = `scaleX(${ratio})`;
       if (ratio < 0.3) {
@@ -99,7 +101,7 @@ export class HUD {
     this.timerFill.style.transform = 'scaleX(1)';
     this.timerFill.classList.remove('danger');
     this.hudTimer.classList.remove('danger');
-    this.timerText.textContent = Math.ceil(CONFIG.COMBAT.INPUT_TIMEOUT_MS / 1000);
+    this.timerText.textContent = Math.ceil((state.inputTotalMs || CONFIG.COMBAT.INPUT_TIMEOUT_MS) / 1000);
   }
 
   _renderCombo(c) {
