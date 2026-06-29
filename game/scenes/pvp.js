@@ -261,7 +261,6 @@ export class PvpScene {
     if (this._pvpState !== PVP_STATE.BATTLE) return;
     if (!this._pendingAnswer && state.inputDeadline > 0 && now > state.inputDeadline) {
       this._pendingAnswer = true;
-      this.net.send({ type: 'submit_answer', word: '' });
     }
   }
 
