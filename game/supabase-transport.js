@@ -176,11 +176,14 @@ export class SupabaseTransport {
 
     this._roomChannel.on('broadcast', { event: 'game' }, (payload) => {
       const msg = payload.payload;
-      if (msg.type === 'submit_answer' && this._isHost && this._room) {
-        const guestSide = this._side === 'player1' ? 'player2' : 'player1';
-        this._room.answered.set(guestSide, msg.word);
-        if (this._room.answered.size >= 2) {
-          this._processAnswers();
+      if (msg.type === 'submit_answer') {
+        if (msg.sender === this.playerId) return;
+        if (this._isHost && this._room) {
+          const guestSide = this._side === 'player1' ? 'player2' : 'player1';
+          this._room.answered.set(guestSide, msg.word);
+          if (this._room.answered.size >= 2) {
+            this._processAnswers();
+          }
         }
         return;
       }
@@ -277,6 +280,7 @@ export class SupabaseTransport {
     if (!this._room || !this._room.currentWord) return;
     clearTimeout(this._answerTimeout);
     const word = this._room.currentWord;
+    this._room.currentWord = null;
     for (const side of ['player1', 'player2']) {
       const answer = this._room.answered.get(side) || '';
       const correct = checkAnswer(answer, word.word);
@@ -307,7 +311,7 @@ export class SupabaseTransport {
   _broadcast(msg) {
     if (this._roomChannel) {
       try {
-        this._roomChannel.send({ type: 'broadcast', event: 'game', payload: msg });
+        this._roomChannel.send({ type: 'broadcast', event: 'game', payload: { ...msg, sender: this.playerId } });
       } catch {}
     }
   }
