@@ -34,6 +34,7 @@ export class SupabaseTransport {
     this._room = null;
     this._answerTimeout = null;
     this._nextWordTimeout = null;
+    this._disconnectTimer = null;
   }
 
   connect(url) {
@@ -99,6 +100,7 @@ export class SupabaseTransport {
     });
 
     this._lobbyChannel.on('presence', { event: 'sync' }, () => {
+      if (this._roomId) return;
       const state = this._lobbyChannel.presenceState();
       const players = Object.keys(state).sort();
       if (players.length >= 2 && players[0] === this.playerId) {
@@ -108,11 +110,13 @@ export class SupabaseTransport {
         this._isHost = true;
         this._roomId = roomId;
 
-        this._lobbyChannel.send({
-          type: 'broadcast',
-          event: 'match',
-          payload: { roomId, player1: players[0], player2: players[1] }
-        });
+        try {
+          this._lobbyChannel.send({
+            type: 'broadcast',
+            event: 'match',
+            payload: { roomId, player1: players[0], player2: players[1] }
+          });
+        } catch {}
 
         if (this._lobbyChannel) {
           this._lobbyChannel.unsubscribe();
@@ -126,6 +130,7 @@ export class SupabaseTransport {
     });
 
     this._lobbyChannel.on('broadcast', { event: 'match' }, (payload) => {
+      if (this._roomId) return;
       const { roomId, player1, player2 } = payload.payload;
       if (player1 !== this.playerId && player2 !== this.playerId) return;
       if (player1 === this.playerId) return;
@@ -164,6 +169,7 @@ export class SupabaseTransport {
 
   _joinRoom(roomId) {
     this._roomStarted = false;
+    this._roomSubscribed = false;
     this._roomChannel = this._client.channel(`pvp-room:${roomId}`, {
       config: { presence: { key: this.playerId } }
     });
@@ -187,8 +193,19 @@ export class SupabaseTransport {
 
       if (this._roomStarted) {
         if (this._room && players.length < 2) {
-          this._room = null;
-          this._dispatch({ type: 'game_over', winner: this._side, reason: 'disconnect' });
+          if (this._disconnectTimer) return;
+          this._disconnectTimer = setTimeout(() => {
+            this._disconnectTimer = null;
+            if (!this._roomChannel || !this._room) return;
+            const s = this._roomChannel.presenceState();
+            if (Object.keys(s).length < 2) {
+              this._room = null;
+              this._dispatch({ type: 'game_over', winner: this._side, reason: 'disconnect' });
+            }
+          }, 3000);
+        } else if (players.length >= 2 && this._disconnectTimer) {
+          clearTimeout(this._disconnectTimer);
+          this._disconnectTimer = null;
         }
       } else if (players.length >= 2) {
         this._roomStarted = true;
@@ -207,16 +224,21 @@ export class SupabaseTransport {
 
     this._roomChannel.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
+        this._roomSubscribed = true;
         try {
           await this._roomChannel.track({ user_id: this.playerId, side: this._side });
         } catch {}
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      } else if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && !this._roomSubscribed) {
         this._dispatch({ type: 'disconnected', code: 0 });
       }
     });
   }
 
   _leaveRoom() {
+    if (this._disconnectTimer) {
+      clearTimeout(this._disconnectTimer);
+      this._disconnectTimer = null;
+    }
     if (this._roomChannel) {
       this._roomChannel.unsubscribe();
       this._roomChannel = null;
@@ -284,7 +306,9 @@ export class SupabaseTransport {
 
   _broadcast(msg) {
     if (this._roomChannel) {
-      this._roomChannel.send({ type: 'broadcast', event: 'game', payload: msg });
+      try {
+        this._roomChannel.send({ type: 'broadcast', event: 'game', payload: msg });
+      } catch {}
     }
   }
 
