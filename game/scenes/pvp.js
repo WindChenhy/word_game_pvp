@@ -103,7 +103,8 @@ export class PvpScene {
 
     this._unbindNet.push(this.net.on('new_word', (msg) => {
       this._pendingAnswer = false;
-      state.setWord(msg.word);
+      // PVP 一回合 30s，传 totalMs 让 state.inputTotalMs / HUD 计时条都用真实时长
+      state.setWord(msg.word, 30000);
     }));
 
     this._unbindNet.push(this.net.on('hit', (msg) => {
