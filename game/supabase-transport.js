@@ -35,7 +35,7 @@ export class SupabaseTransport {
     this._answerTimeout = null;
     this._nextWordTimeout = null;
     this._disconnectTimer = null;
-    this._currentWord = null;       // 仅 guest 用来做"乐观本地结算"，让远端广播回来时不重复触发动画
+    this._currentWord = null;       // 客户端缓存当前题目的单词：guest 用它做"乐观本地结算"，host 在 _optimisticLocalResolve 里也用它（host 主要读 _room.currentWord，这个字段只是冗余备份）
     this._optimisticKeys = new Set(); // 记录本地乐观派发过的消息 key，用于去重宿主的回环广播
   }
 
@@ -186,6 +186,11 @@ export class SupabaseTransport {
       if (msg.type === 'submit_answer') {
         if (msg.sender === this.playerId) return;
         if (this._isHost && this._room) {
+          // 丢掉"过题"广播：如果 submit_answer 带的 wordId 和当前 currentWord.id
+          // 对不上，说明这是上一题在网络里飘过来的迟到提交，不能污染本轮的 answered。
+          if (msg.wordId !== undefined && this._room.currentWord && msg.wordId !== this._room.currentWord.id) {
+            return;
+          }
           const guestSide = this._side === 'player1' ? 'player2' : 'player1';
           this._room.answered.set(guestSide, msg.word);
           if (this._room.answered.size >= 2) {
@@ -292,28 +297,44 @@ export class SupabaseTransport {
       // 为了让 guest 不用等 1~2s 网络回程就能看到自己的命中/受击动画，
       // 在本地基于当前单词做一次"乐观结算"并立刻 dispatch。
       // 之后 host 的回环广播会带相同的 key，被 _isOptimisticDup 过滤掉，避免双重动画。
-      if (this._currentWord) {
-        const correct = checkAnswer(word, this._currentWord.word);
-        if (correct) {
-          const damage = this._currentWord.word.length;
-          const opponent = this._side === 'player1' ? 'player2' : 'player1';
-          const hitMsg = { type: 'hit', attacker: this._side, victim: opponent, damage, word: this._currentWord.word };
-          this._markOptimistic(hitMsg);
-          this._dispatch(hitMsg);
-        } else {
-          const selfHitMsg = { type: 'self_hit', player: this._side, damage: 10 };
-          this._markOptimistic(selfHitMsg);
-          this._dispatch(selfHitMsg);
-        }
-      }
+      this._optimisticLocalResolve(word, this._currentWord);
       this._broadcast({ type: 'submit_answer', word });
       return;
     }
     // ===== HOST 分支 =====
+    // host 自己也有 _room.currentWord，所以也能在本地立刻做"乐观结算"，
+    // 这样点完发送按钮 0 延迟就能看到自己那一侧的动画，
+    // 不必等 guest 的 submit_answer 跨越 1~2s 网络回来才触发 _processAnswers。
     this._room.answered.set(this._side, word);
-    this._broadcast({ type: 'submit_answer', word });
+    this._optimisticLocalResolve(word, this._room.currentWord);
+    this._broadcast({ type: 'submit_answer', word, wordId: this._room.currentWord && this._room.currentWord.id });
     if (this._room.answered.size >= 2) {
       this._processAnswers();
+    }
+  }
+
+  /**
+   * 在本地基于当前单词对提交做"乐观结算"：立刻派发 hit / self_hit 触发动画，
+   * 并把对应的去重 key 记到 _optimisticKeys，后续 host / 自身的回环广播若
+   * 带相同 key 会被 _isOptimisticDup 过滤，避免双重动画。
+   *
+   * HOST 和 GUEST 共用这一段，避免两边逻辑漂移。
+   * @param {string} word      玩家输入的词
+   * @param {{word:string,id?:number}|null} currentWord 当前题目的单词对象
+   */
+  _optimisticLocalResolve(word, currentWord) {
+    if (!currentWord) return;
+    const correct = checkAnswer(word, currentWord.word);
+    if (correct) {
+      const damage = currentWord.word.length;
+      const opponent = this._side === 'player1' ? 'player2' : 'player1';
+      const hitMsg = { type: 'hit', attacker: this._side, victim: opponent, damage, word: currentWord.word };
+      this._markOptimistic(hitMsg);
+      this._dispatch(hitMsg);
+    } else {
+      const selfHitMsg = { type: 'self_hit', player: this._side, damage: 10 };
+      this._markOptimistic(selfHitMsg);
+      this._dispatch(selfHitMsg);
     }
   }
 
@@ -379,7 +400,11 @@ export class SupabaseTransport {
       this._broadcast({ type: 'game_over', winner, reason: 'hp_zero' });
       this._room = null;
     } else {
-      this._nextWordTimeout = setTimeout(() => this._sendNextWord(), 1000);
+      // 把"算完到下一题"的间隔从 1000ms 压到 400ms，配合双向乐观派发，
+      // 让玩家点完发送后能在大约 0.5s + 网络回程内看到下一个单词。
+      // 旧的 1s 延迟更多是为了 PVE 节奏感；PVP 1v1 真人对抗节奏本来就快，
+      // 长时间停留会被误以为是"发送卡住"。
+      this._nextWordTimeout = setTimeout(() => this._sendNextWord(), 400);
     }
   }
 
