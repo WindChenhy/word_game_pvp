@@ -35,6 +35,8 @@ export class SupabaseTransport {
     this._answerTimeout = null;
     this._nextWordTimeout = null;
     this._disconnectTimer = null;
+    this._currentWord = null;       // 仅 guest 用来做"乐观本地结算"，让远端广播回来时不重复触发动画
+    this._optimisticKeys = new Set(); // 记录本地乐观派发过的消息 key，用于去重宿主的回环广播
   }
 
   connect(url) {
@@ -171,7 +173,12 @@ export class SupabaseTransport {
     this._roomStarted = false;
     this._roomSubscribed = false;
     this._roomChannel = this._client.channel(`pvp-room:${roomId}`, {
-      config: { presence: { key: this.playerId } }
+      config: {
+        presence: { key: this.playerId },
+        // self: true 让广播也回环给发送者，否则宿主的 self_hit / hp_update 等事件
+        // 永远收不到，本地状态永远不更新（会出现"自己发不出去"的现象）。
+        broadcast: { self: true }
+      }
     });
 
     this._roomChannel.on('broadcast', { event: 'game' }, (payload) => {
@@ -187,6 +194,14 @@ export class SupabaseTransport {
         }
         return;
       }
+      // 同步本地 currentWord（guest 没有 _room，靠这个字段做乐观结算）
+      if (msg.type === 'new_word' && msg.word) {
+        this._currentWord = msg.word;
+        // 新一轮：清空上一轮乐观派发的去重 key，防止跨轮误判
+        this._optimisticKeys.clear();
+      }
+      // 宿主回环/对方广播：若本地已经乐观派发过相同 key 的结算，跳过以避免双重动画。
+      if (this._isOptimisticDup(msg)) return;
       this._dispatch(msg);
     });
 
@@ -218,7 +233,8 @@ export class SupabaseTransport {
             currentWord: null,
             answered: new Map(),
           };
-          this._dispatch({ type: 'game_start', hp: 100, maxHp: 100 });
+          // self: true 已开启，广播会自动回环给发送者，因此只 _broadcast 即可。
+          // 旧代码还会本地 _dispatch 一次，会导致 _startBattle / hud.bind 重复执行（双重挂载监听）。
           this._broadcast({ type: 'game_start', hp: 100, maxHp: 100 });
           this._sendNextWord();
         }
@@ -247,6 +263,8 @@ export class SupabaseTransport {
       this._roomChannel = null;
     }
     this._room = null;
+    this._currentWord = null;
+    this._optimisticKeys.clear();
     if (this._answerTimeout) clearTimeout(this._answerTimeout);
     if (this._nextWordTimeout) clearTimeout(this._nextWordTimeout);
   }
@@ -257,7 +275,10 @@ export class SupabaseTransport {
     this._room.currentWord = word;
     this._room.answered = new Map();
     const data = { type: 'new_word', word };
-    this._dispatch(data);
+    // self: true 让广播回环，宿主也会在自己的 broadcast 监听中收到。
+    // 旧版同时 _dispatch + _broadcast 会让 on('new_word') 触发两次；
+    // on('new_word') 内部是幂等的（_pendingAnswer=false、state.setWord）所以没问题，
+    // 但移除冗余 _dispatch 让逻辑更清晰。
     this._broadcast(data);
     this._answerTimeout = setTimeout(() => {
       this._processAnswers();
@@ -266,14 +287,68 @@ export class SupabaseTransport {
 
   _handleSubmit(word) {
     if (!this._isHost || !this._room) {
+      // ===== GUEST 分支 =====
+      // guest 没有 _room，只负责把提交广播给 host。
+      // 为了让 guest 不用等 1~2s 网络回程就能看到自己的命中/受击动画，
+      // 在本地基于当前单词做一次"乐观结算"并立刻 dispatch。
+      // 之后 host 的回环广播会带相同的 key，被 _isOptimisticDup 过滤掉，避免双重动画。
+      if (this._currentWord) {
+        const correct = checkAnswer(word, this._currentWord.word);
+        if (correct) {
+          const damage = this._currentWord.word.length;
+          const opponent = this._side === 'player1' ? 'player2' : 'player1';
+          const hitMsg = { type: 'hit', attacker: this._side, victim: opponent, damage, word: this._currentWord.word };
+          this._markOptimistic(hitMsg);
+          this._dispatch(hitMsg);
+        } else {
+          const selfHitMsg = { type: 'self_hit', player: this._side, damage: 10 };
+          this._markOptimistic(selfHitMsg);
+          this._dispatch(selfHitMsg);
+        }
+      }
       this._broadcast({ type: 'submit_answer', word });
       return;
     }
+    // ===== HOST 分支 =====
     this._room.answered.set(this._side, word);
     this._broadcast({ type: 'submit_answer', word });
     if (this._room.answered.size >= 2) {
       this._processAnswers();
     }
+  }
+
+  /**
+   * 为某条结算消息生成稳定的去重 key。
+   * guest 在本地乐观派发时记录 key；host 回环广播到达时若 key 命中则跳过，
+   * 避免双重动画 / 双重计数。
+   *
+   * 注意：广播里 _processAnswers / _handleSubmit 传过来的 hit / self_hit
+   * 只携带字符串 `word`，没有 id 字段；所以这里用 word 字符串本身 + 损伤值来生成 key。
+   * 乐观派发时构造的 hitMsg / selfHitMsg 也用同样的字段，确保两端 key 完全一致。
+   */
+  _markOptimistic(msg) {
+    let key;
+    if (msg.type === 'hit') {
+      // msg.word 在两类广播里都是 string（单词本身），不是带 id 的对象
+      key = `hit:${msg.attacker}:${msg.victim}:${msg.damage}:${msg.word}`;
+    } else if (msg.type === 'self_hit') {
+      key = `self_hit:${msg.player}:${msg.damage}`;
+    } else {
+      key = `${msg.type}:${JSON.stringify(msg)}`;
+    }
+    this._optimisticKeys.add(key);
+  }
+
+  _isOptimisticDup(msg) {
+    let key;
+    if (msg.type === 'hit') {
+      key = `hit:${msg.attacker}:${msg.victim}:${msg.damage}:${msg.word}`;
+    } else if (msg.type === 'self_hit') {
+      key = `self_hit:${msg.player}:${msg.damage}`;
+    } else {
+      return false;
+    }
+    return this._optimisticKeys.has(key);
   }
 
   _processAnswers() {
